@@ -14,7 +14,11 @@ func TestGatewayAgentString(t *testing.T) {
 
 	var usr, err = user.Current()
 	assert.Nil(t, err)
-	assert.Equal(t, httpAgentPrefix+"/"+usr.Username, str)
+	if usr.Name != "" {
+		assert.Equal(t, httpAgentPrefix+"/"+usr.Name, str)
+	} else {
+		assert.Equal(t, httpAgentPrefix+"/"+usr.Username, str)
+	}
 
 	os.Setenv("SYSTEM", "system")
 	os.Setenv("COMPONENT", "component")
