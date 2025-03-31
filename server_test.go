@@ -186,28 +186,30 @@ func BenchmarkServer(b *testing.B) {
 	})
 }
 
-func TestServerNoRoute(t *testing.T) {
+func TestServer(t *testing.T) {
 	var srv = webservice.NewServer("127.0.0.1:8001", webservice.ServerOptions{})
 	var doneStart = serverStart(srv)
 
-	var cli = webservice.NewClient("http://127.0.0.1:8001")
-	var s, res, err = cli.Request(context.TODO(), http.MethodGet, "/", nil)
-	assert.Nil(t, err)
-	assert.Equal(t, 404, s)
-	assert.NotNil(t, res)
-	assert.Equal(t, `{"message":"Not Found"}`, string(res))
+	t.Run("no rounte", func(t *testing.T) {
+		var cli = webservice.NewClient("http://127.0.0.1:8001")
+		var s, res, err = cli.Request(context.TODO(), http.MethodGet, "/", nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 404, s)
+		assert.NotNil(t, res)
+		assert.Equal(t, `{"message":"Not Found"}`, string(res))
+	})
 
 	var doneStop = serverStop(srv)
 	assert.Nil(t, waitOnChan(doneStart), "failed to start server")
 	assert.Nil(t, waitOnChan(doneStop), "failed to stop server")
 }
 
-func TestServerAccessLogs(t *testing.T) {
+func TestServer_Logs(t *testing.T) {
 	b := &bytes.Buffer{}
 	w := logger.New(logger.ConfigWriter(b))
 	var log = slog.New(logger.NewSLogHandler(w.Spawn(), slog.LevelDebug))
 
-	var srv = webservice.NewServer("127.0.0.1:8001", webservice.ServerOptions{Logger: log})
+	var srv = webservice.NewServer("127.0.0.1:8002", webservice.ServerOptions{Logger: log})
 
 	srv.Echo.GET("/sample/:test", func(ctx webservice.Context) error {
 		switch ctx.Param("test") {
@@ -215,51 +217,38 @@ func TestServerAccessLogs(t *testing.T) {
 			ctx.Request().Header.Add("X-Tags", "tag1")
 			ctx.Request().Header.Add("X-Tags", "tag2")
 		case "two":
+		case "panic":
+			panic("oops")
 		}
 		return ctx.NoContent(200)
 	})
 
 	var doneStart = serverStart(srv)
 
-	var cli = webservice.NewClient("http://127.0.0.1:8001")
+	var cli = webservice.NewClient("http://127.0.0.1:8002")
 
-	var reqHeaders = map[string]string{
-		"X-Request-ID": "ID",
-	}
-	var status, _, err = cli.NewRequest().WithHeaders(reqHeaders).WithTimeout(time.Second).Do(context.TODO(), "GET", "/sample/one", nil)
-	assert.Nil(t, err)
-	assert.Equal(t, 200, status)
-	assert.Contains(t, b.String(), `"tag1","tag2"`)
-	b.Reset()
-	status, _, err = cli.NewRequest().WithHeaders(reqHeaders).WithTimeout(time.Second).Do(context.TODO(), "GET", "/sample/two", nil)
-	assert.Nil(t, err)
-	assert.Equal(t, 200, status)
-	assert.NotContains(t, b.String(), `"tag1","tag2"`)
-	b.Reset()
-
-	var doneStop = serverStop(srv)
-	assert.Nil(t, waitOnChan(doneStart), "failed to terminate server")
-	assert.Nil(t, waitOnChan(doneStop), "failed to stop server")
-}
-
-func TestServerPanicRecover(t *testing.T) {
-	b := &bytes.Buffer{}
-	w := logger.New(logger.ConfigWriter(b))
-	var log = slog.New(logger.NewSLogHandler(w.Spawn(), slog.LevelDebug))
-
-	var srv = webservice.NewServer("127.0.0.1:8001", webservice.ServerOptions{Logger: log})
-	srv.Echo.GET("/sample/:test", func(ctx webservice.Context) error {
-		panic("oops")
+	t.Run("access log ok", func(t *testing.T) {
+		var reqHeaders = map[string]string{
+			"X-Request-ID": "ID",
+		}
+		var status, _, err = cli.NewRequest().WithHeaders(reqHeaders).WithTimeout(time.Second).Do(context.TODO(), "GET", "/sample/one", nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 200, status)
+		assert.Contains(t, b.String(), `"tag1","tag2"`)
+		b.Reset()
+		status, _, err = cli.NewRequest().WithHeaders(reqHeaders).WithTimeout(time.Second).Do(context.TODO(), "GET", "/sample/two", nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 200, status)
+		assert.NotContains(t, b.String(), `"tag1","tag2"`)
+		b.Reset()
 	})
 
-	var doneStart = serverStart(srv)
-
-	var cli = webservice.NewClient("http://127.0.0.1:8001")
-
-	var status, _, err = cli.NewRequest().WithTimeout(time.Second).Do(context.TODO(), "GET", "/sample/one", nil)
-	assert.Nil(t, err)
-	assert.Equal(t, 500, status)
-	assert.Contains(t, b.String(), "[PANIC RECOVER] oops")
+	t.Run("panic", func(t *testing.T) {
+		var status, _, err = cli.NewRequest().WithTimeout(time.Second).Do(context.TODO(), "GET", "/sample/panic", nil)
+		assert.Nil(t, err)
+		assert.Equal(t, 500, status)
+		assert.Contains(t, b.String(), "[PANIC RECOVER] oops")
+	})
 
 	var doneStop = serverStop(srv)
 	assert.Nil(t, waitOnChan(doneStart), "failed to terminate server")
